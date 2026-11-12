@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="StandBy">
+<meta name="theme-color" content="#000000">
+<title>StandBy Clock</title>
+<style>
+  :root {
+    --bg: #000;
+    --fg: #fff;
+    --tick: #6e6e6e;
+    --tick-hour: #b4b4b4;
+    --accent: #f0a030;
+    --sub: #8e8e93;
+    --today: #ff453a;
+  }
+  body.night {
+    --fg: #ff2d20;
+    --tick: #5a0e0a;
+    --tick-hour: #8c1a12;
+    --accent: #ff2d20;
+    --sub: #7a1510;
+    --today: #ff2d20;
+  }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+    overflow: hidden; -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent; touch-action: pan-x;
+    font-family: -apple-system, "SF Pro Display", "Helvetica Neue", "Hiragino Sans", sans-serif;
+  }
+  #pager {
+    display: flex; width: 100vw; height: 100vh; height: 100dvh;
+    overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  #pager::-webkit-scrollbar { display: none; }
+  .page {
+    flex: 0 0 100vw; height: 100%; scroll-snap-align: start; position: relative;
+    display: flex; align-items: center; justify-content: center;
+  }
+  svg { display: block; }
+  .num { fill: var(--fg); font-weight: 700; font-stretch: expanded; font-family: "SF Pro Display", -apple-system, "Helvetica Neue", sans-serif; }
+  .date { fill: var(--fg); font-weight: 500; }
+
+  /* Page 2: round dial + calendar */
+  .split { display: flex; align-items: center; justify-content: space-around; width: 100%; height: 100%; padding: 0 3vw; box-sizing: border-box; }
+  #roundSvg { width: min(88vh, 46vw); height: min(88vh, 46vw); }
+  .cal { width: min(44vw, 92vh); color: var(--fg); }
+  .cal-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1.6vh; }
+  .cal-month { font-size: 6.5vh; font-weight: 700; color: var(--today); }
+  .cal-year { font-size: 4.5vh; color: var(--sub); font-weight: 600; }
+  .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); row-gap: 1.2vh; text-align: center; }
+  .cal-grid .dow { font-size: 3.6vh; color: var(--sub); font-weight: 600; }
+  .cal-grid .d { font-size: 5vh; font-weight: 600; line-height: 8vh; height: 8vh; }
+  .cal-grid .d.sun { color: var(--sub); }
+  .cal-grid .d.today { background: var(--today); color: #000; border-radius: 50%; width: 8vh; margin: 0 auto; }
+  body.night .cal-grid .d.today { color: #000; }
+
+  /* Page 3: digital */
+  .digital { text-align: center; }
+  .dg-time { font-size: 44vh; font-weight: 700; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .dg-time .colon { opacity: 1; transition: opacity .3s; }
+  .dg-date { font-size: 7vh; color: var(--sub); font-weight: 600; margin-top: 3vh; }
+
+  /* overlays */
+  #dots { position: fixed; bottom: 2.5vh; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; transition: opacity .6s; opacity: 0; pointer-events: none; }
+  #dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--fg); opacity: .3; }
+  #dots i.on { opacity: .9; }
+  #toast {
+    position: fixed; top: 4vh; left: 50%; transform: translateX(-50%);
+    background: rgba(60,60,67,.85); color: #fff; font-size: 14px; padding: 8px 14px; border-radius: 18px;
+    opacity: 0; transition: opacity .4s; pointer-events: none; white-space: nowrap;
+  }
+  #toast.show { opacity: 1; }
+  @media (orientation: portrait) {
+    .split { flex-direction: column; justify-content: center; gap: 4vh; }
+    #roundSvg { width: 80vw; height: 80vw; }
+    .cal { width: 80vw; }
+    .cal-month { font-size: 6vw; } .cal-year { font-size: 4vw; }
+    .cal-grid .dow { font-size: 3.4vw; }
+    .cal-grid .d { font-size: 4.5vw; line-height: 8vw; height: 8vw; }
+    .cal-grid .d.today { width: 8vw; }
+    .dg-time { font-size: 26vw; } .dg-date { font-size: 5vw; }
+  }
+</style>
+</head>
+<body>
+<div id="pager">
+  <section class="page"><svg id="rectSvg"></svg></section>
+  <section class="page">
+    <div class="split">
+      <svg id="roundSvg" viewBox="-100 -100 200 200"></svg>
+      <div class="cal" id="cal"></div>
+    </div>
+  </section>
+  <section class="page">
+    <div class="digital">
+      <div class="dg-time" id="dgTime"></div>
+      <div class="dg-date" id="dgDate"></div>
+    </div>
+  </section>
+</div>
+<div id="dots"><i></i><i></i><i></i></div>
+<div id="toast"></div>
+
+<script>
+const NS = 'http://www.w3.org/2000/svg';
+const DOW = ['日','月','火','水','木','金','土'];
+const el = (tag, attrs, parent) => {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+};
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch {} }
+};
+
+/* ---------- 針 (共通) ---------- */
+function makeHands(parent, cx, cy, R, unit) {
+  const g = (cls) => el('g', {}, parent);
+  const hour = g(), min = g(), sec = g();
+  const stroke = 'var(--fg)';
+  // hour
+  el('line', { x1: cx, y1: cy, x2: cx, y2: cy - R * 0.16, stroke, 'stroke-width': unit * 0.011, 'stroke-linecap': 'round' }, hour);
+  el('line', { x1: cx, y1: cy - R * 0.16, x2: cx, y2: cy - R * 0.52, stroke, 'stroke-width': unit * 0.036, 'stroke-linecap': 'round' }, hour);
+  // minute
+  el('line', { x1: cx, y1: cy, x2: cx, y2: cy - R * 0.16, stroke, 'stroke-width': unit * 0.011, 'stroke-linecap': 'round' }, min);
+  el('line', { x1: cx, y1: cy - R * 0.16, x2: cx, y2: cy - R * 0.86, stroke, 'stroke-width': unit * 0.036, 'stroke-linecap': 'round' }, min);
+  // center cap
+  el('circle', { cx, cy, r: unit * 0.022, fill: stroke }, parent);
+  // second
+  el('line', { x1: cx, y1: cy + R * 0.18, x2: cx, y2: cy - R * 0.94, stroke: 'var(--accent)', 'stroke-width': unit * 0.007, 'stroke-linecap': 'round' }, sec);
+  el('circle', { cx, cy, r: unit * 0.013, fill: 'var(--accent)' }, sec);
+  el('circle', { cx, cy, r: unit * 0.005, fill: '#000' }, sec);
+  parent.appendChild(sec);
+  return { hour, min, sec, cx, cy };
+}
+function setHands(h, now) {
+  const ms = now.getMilliseconds(), s = now.getSeconds() + ms / 1000;
+  const m = now.getMinutes() + s / 60, hr = (now.getHours() % 12) + m / 60;
+  h.hour.setAttribute('transform', `rotate(${hr * 30} ${h.cx} ${h.cy})`);
+  h.min.setAttribute('transform', `rotate(${m * 6} ${h.cx} ${h.cy})`);
+  h.sec.setAttribute('transform', `rotate(${s * 6} ${h.cx} ${h.cy})`);
+}
+
+/* ---------- 1: 長方形ダイヤル ---------- */
+let rectHands, rectDate;
+function buildRect() {
+  const svg = document.getElementById('rectSvg');
+  const W = innerWidth, H = innerHeight, cx = W / 2, cy = H / 2, m = Math.min(W, H);
+  svg.innerHTML = '';
+  svg.setAttribute('width', W); svg.setAttribute('height', H);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  for (let i = 0; i < 60; i++) {
+    const a = i * Math.PI / 30, dx = Math.sin(a), dy = -Math.cos(a);
+    const t = Math.min(Math.abs(dx) > 1e-6 ? (W / 2) / Math.abs(dx) : Infinity,
+                       Math.abs(dy) > 1e-6 ? (H / 2) / Math.abs(dy) : Infinity);
+    const hour = i % 5 === 0;
+    let len = hour ? m * 0.19 : m * 0.065;
+    if (i === 0 || i === 30) len = m * 0.05;
+    const o = t + 2, n = t - len;
+    el('line', {
+      x1: cx + dx * n, y1: cy + dy * n, x2: cx + dx * o, y2: cy + dy * o,
+      stroke: hour ? 'var(--tick-hour)' : 'var(--tick)',
+      'stroke-width': hour ? m * 0.009 : m * 0.006
+    }, svg);
+  }
+  const fs = m * 0.145;
+  const num = (txt, x, y) => { const e = el('text', { x, y, class: 'num', 'font-size': fs, 'text-anchor': 'middle', 'dominant-baseline': 'central' }, svg); e.textContent = txt; };
+  num('12', cx, m * 0.125);
+  num('6', cx, H - m * 0.125);
+  num('9', m * 0.29, cy);
+  num('3', W - m * 0.29, cy);
+  rectDate = el('text', { x: W - m * 0.43, y: cy, class: 'date', 'font-size': m * 0.058, 'text-anchor': 'end', 'dominant-baseline': 'central' }, svg);
+  const handsLayer = el('g', {}, svg);
+  rectHands = makeHands(handsLayer, cx, cy, H / 2, m);
+}
+
+/* ---------- 2: 丸ダイヤル + カレンダー ---------- */
+let roundHands;
+function buildRound() {
+  const svg = document.getElementById('roundSvg');
+  svg.innerHTML = '';
+  for (let i = 0; i < 60; i++) {
+    const a = i * Math.PI / 30, dx = Math.sin(a), dy = -Math.cos(a);
+    const hour = i % 5 === 0, r1 = hour ? 88 : 90, r2 = 97;
+    el('line', { x1: dx * r1, y1: dy * r1, x2: dx * r2, y2: dy * r2,
+      stroke: hour ? 'var(--fg)' : 'var(--tick)', 'stroke-width': hour ? 2.2 : 1.6, 'stroke-linecap': 'round' }, svg);
+  }
+  for (let h = 1; h <= 12; h++) {
+    const a = h * Math.PI / 6;
+    const t = el('text', { x: Math.sin(a) * 73, y: -Math.cos(a) * 73, class: 'num', 'font-size': 21,
+      'text-anchor': 'middle', 'dominant-baseline': 'central', style: 'font-stretch:normal' }, svg);
+    t.textContent = h;
+  }
+  roundHands = makeHands(el('g', {}, svg), 0, 0, 100, 200);
+}
+function buildCal(now) {
+  const y = now.getFullYear(), mo = now.getMonth(), today = now.getDate();
+  const first = new Date(y, mo, 1).getDay(), days = new Date(y, mo + 1, 0).getDate();
+  let html = `<div class="cal-head"><span class="cal-month">${mo + 1}月</span><span class="cal-year">${y}</span></div><div class="cal-grid">`;
+  html += DOW.map(d => `<div class="dow">${d}</div>`).join('');
+  for (let i = 0; i < first; i++) html += '<div></div>';
+  for (let d = 1; d <= days; d++) {
+    const dow = (first + d - 1) % 7;
+    html += `<div class="d${dow === 0 ? ' sun' : ''}${d === today ? ' today' : ''}">${d}</div>`;
+  }
+  document.getElementById('cal').innerHTML = html + '</div>';
+}
+
+/* ---------- ナイトモード ---------- */
+const MODES = ['auto', 'on', 'off'];
+const MODE_LABEL = { auto: 'ナイトモード: 自動 (22時〜6時)', on: 'ナイトモード: オン', off: 'ナイトモード: オフ' };
+let nightMode = store.get('night', 'auto');
+function applyNight(now) {
+  const h = now.getHours();
+  const on = nightMode === 'on' || (nightMode === 'auto' && (h >= 22 || h < 6));
+  document.body.classList.toggle('night', on);
+}
+
+/* ---------- 更新ループ ---------- */
+let lastSec = -1, lastDay = -1;
+function tick() {
+  const now = new Date();
+  setHands(rectHands, now);
+  setHands(roundHands, now);
+  if (now.getSeconds() !== lastSec) {
+    lastSec = now.getSeconds();
+    const hh = now.getHours(), mm = String(now.getMinutes()).padStart(2, '0');
+    rectDate.textContent = `${now.getDate()}日(${DOW[now.getDay()]})`;
+    document.getElementById('dgTime').innerHTML = `${hh}<span class="colon">:</span>${mm}`;
+    document.getElementById('dgDate').textContent = `${now.getMonth() + 1}月${now.getDate()}日 ${DOW[now.getDay()]}曜日`;
+    applyNight(now);
+    if (now.getDate() !== lastDay) { lastDay = now.getDate(); buildCal(now); }
+  }
+  requestAnimationFrame(tick);
+}
+
+/* ---------- ページング ---------- */
+const pager = document.getElementById('pager'), dots = document.getElementById('dots');
+let dotsTimer;
+function showDots() {
+  const idx = Math.round(pager.scrollLeft / innerWidth);
+  [...dots.children].forEach((d, i) => d.classList.toggle('on', i === idx));
+  dots.style.opacity = 1;
+  clearTimeout(dotsTimer);
+  dotsTimer = setTimeout(() => { dots.style.opacity = 0; store.set('page', idx); }, 1500);
+}
+pager.addEventListener('scroll', showDots, { passive: true });
+
+/* ---------- トースト ---------- */
+const toastEl = document.getElementById('toast');
+let toastTimer;
+function toast(msg) {
+  toastEl.textContent = msg; toastEl.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+}
+
+/* ---------- スリープ防止 ---------- */
+let wakeLock = null;
+async function requestWake() {
+  if (!('wakeLock' in navigator)) return false;
+  try {
+    wakeLock = await navigator.wakeLock.request('screen');
+    wakeLock.addEventListener('release', () => { wakeLock = null; });
+    return true;
+  } catch { return false; }
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && !wakeLock) requestWake(); });
+
+/* ---------- タップ操作 ---------- */
+let lastTap = 0;
+document.addEventListener('click', async () => {
+  const t = Date.now();
+  if (t - lastTap < 350) {
+    nightMode = MODES[(MODES.indexOf(nightMode) + 1) % MODES.length];
+    store.set('night', nightMode);
+    applyNight(new Date());
+    toast(MODE_LABEL[nightMode]);
+    lastTap = 0;
+    return;
+  }
+  lastTap = t;
+  if (!wakeLock) {
+    const ok = await requestWake();
+    toast(ok ? 'スリープ防止: オン' : 'スリープ防止非対応 — 自動ロックを「なし」に');
+  }
+  if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  }
+});
+
+/* ---------- 起動 ---------- */
+function layout() {
+  buildRect(); buildRound();
+  pager.scrollLeft = (+store.get('page', 0) || 0) * innerWidth;
+}
+let resizeTimer;
+addEventListener('resize', () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(layout, 120); });
+layout();
+requestWake();
+tick();
+setTimeout(() => toast('タップ: スリープ防止 / ダブルタップ: ナイトモード / スワイプ: 切替'), 400);
+</script>
+</body>
+</html>
